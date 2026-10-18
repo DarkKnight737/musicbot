@@ -1,0 +1,87 @@
+name: ytdlp-probe
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install yt-dlp (latest, like bot boot)
+        run: pip install -q -U yt-dlp
+
+      - name: Probe A — plain flat search
+        run: |
+          python - <<'PY'
+          import yt_dlp, time
+          print("yt-dlp:", yt_dlp.version.__version__)
+          opts = dict(quiet=True, no_warnings=True, noprogress=True, socket_timeout=15,
+                      extract_flat="in_playlist", skip_download=True,
+                      default_search="ytsearch", noplaylist=True)
+          t0 = time.time()
+          try:
+              with yt_dlp.YoutubeDL(opts) as ydl:
+                  info = ydl.extract_info("ytsearch3:Adele - Hello audio", download=False)
+              ents = [e for e in (info.get("entries") or []) if e]
+              print(f"SEARCH OK in {time.time()-t0:.1f}s ({len(ents)} entries)")
+              for e in ents:
+                  print("  -", e.get("id"), "|", (e.get("title") or "")[:50])
+          except Exception as e:
+              print(f"SEARCH FAILED after {time.time()-t0:.1f}s: {type(e).__name__}: {e}")
+          PY
+
+      - name: Probe B — verbose flat search (user-agent + client hints)
+        if: always()
+        run: |
+          python - <<'PY'
+          import yt_dlp, time
+          opts = dict(quiet=False, verbose=True, socket_timeout=15,
+                      extract_flat="in_playlist", skip_download=True,
+                      default_search="ytsearch", noplaylist=True,
+                      extractor_args={"youtube": {"player_client": ["web_safari", "tv_embedded"]}})
+          t0 = time.time()
+          try:
+              with yt_dlp.YoutubeDL(opts) as ydl:
+                  info = ydl.extract_info("ytsearch2:Adele - Hello audio", download=False)
+              print(f"SEARCH-B OK in {time.time()-t0:.1f}s")
+          except Exception as e:
+              print(f"SEARCH-B FAILED after {time.time()-t0:.1f}s: {type(e).__name__}: {e}")
+          PY
+
+      - name: Probe C — full download of one candidate (bestaudio m4a)
+        if: always()
+        run: |
+          python - <<'PY'
+          import yt_dlp, time, pathlib
+          d = pathlib.Path("probe_out"); d.mkdir(exist_ok=True)
+          opts = dict(quiet=True, no_warnings=True, noprogress=True,
+                      socket_timeout=15, retries=2, noplaylist=True,
+                      format="bestaudio[ext=m4a][abr<=192]/bestaudio[ext=m4a]/bestaudio",
+                      outtmpl=str(d / "source.%(ext)s"),
+                      concurrent_fragment_downloads=8)
+          t0 = time.time()
+          try:
+              with yt_dlp.YoutubeDL(opts) as ydl:
+                  ydl.download(["https://www.youtube.com/watch?v=4qNRgzHTQsk"])
+              files = list(d.iterdir())
+              print(f"DOWNLOAD OK in {time.time()-t0:.1f}s: {[f.name for f in files]}",
+                    [f.stat().st_size for f in files])
+          except Exception as e:
+              print(f"DOWNLOAD FAILED after {time.time()-t0:.1f}s: {type(e).__name__}: {str(e)[:500]}")
+          PY
+
+      - name: Probe D — IP egress sanity
+        if: always()
+        run: |
+          curl -s https://checkip.amazonaws.com || true
+          curl -s -o /dev/null -w "youtube.com HTTP %{http_code}\n" https://www.youtube.com || true
