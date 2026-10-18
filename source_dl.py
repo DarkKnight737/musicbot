@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import tempfile
 import time
 from pathlib import Path
 
@@ -11,6 +12,32 @@ import config
 import utils
 
 log = logging.getLogger("source_dl")
+
+# YouTube cookie jar support: without cookies, datacenter-hosted bots get
+# "Sign in to confirm you're not a bot" — the download is IP-blocked. A
+# logged-in session's cookies (passed via the YOUTUBE_COOKIES env var /
+# secret) make the runner indistinguishable from a browser user.
+_COOKIE_FILE: Path | None = None
+_COOKIE_CONTENT = None
+
+
+def _cookiefile() -> str | None:
+    """Return the cookiefile path, materializing config.YOUTUBE_COOKIES once.
+
+    Rewritten if the secret content changes (the process holds the file
+    path across jobs only — runner jobs are fresh each boot, so the copy
+    simply tracks the secret). Returns None when no cookies are set.
+    """
+    global _COOKIE_FILE, _COOKIE_CONTENT
+    raw = config.YOUTUBE_COOKIES
+    if not raw:
+        return None
+    if _COOKIE_FILE is None:
+        _COOKIE_FILE = Path(tempfile.gettempdir()) / "musicbot_yt_cookies.txt"
+    if raw != _COOKIE_CONTENT:
+        _COOKIE_FILE.write_text(raw, encoding="utf-8")
+        _COOKIE_CONTENT = raw
+    return str(_COOKIE_FILE)
 
 # Noise patterns that identify covers/remixes/etc.
 _BAD = re.compile(
@@ -104,6 +131,9 @@ async def fetch_original(
     dest_dir = str(dest_dir)
     started = time.monotonic()
     query = f"ytsearch{config.YOUTUBE_CANDIDATES}:{artist} - {title} audio"
+    cookies = _cookiefile()
+    if cookies:
+        log.info("using cookie jar from YOUTUBE_COOKIES")
     base_opts = {
         "quiet": True,
         "no_warnings": True,
@@ -112,6 +142,7 @@ async def fetch_original(
         "retries": 2,
         "noplaylist": True,
         "ffmpeg_location": utils.find_ffmpeg(),
+        "cookiefile": cookies,
         # Flat search: no full page fetch per result => several times faster.
         "extract_flat": "in_playlist",
         "skip_download": True,
@@ -148,6 +179,7 @@ async def fetch_original(
         "retries": 2,
         "noplaylist": True,
         "ffmpeg_location": utils.find_ffmpeg(),
+        "cookiefile": cookies,
         "format": "bestaudio[ext=m4a][abr<=192]/bestaudio[ext=m4a]/bestaudio",
         # outtmpl is set per candidate (each gets its own dir) in _dl below
         "concurrent_fragment_downloads": 8,
