@@ -1,0 +1,70 @@
+name: ytdlp-cookie-client-matrix
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install yt-dlp (latest)
+        run: pip install -q -U yt-dlp
+
+      - name: Cookie + player client matrix
+        env:
+          YOUTUBE_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
+        run: |
+          printf '%s' "$YOUTUBE_COOKIES" > /tmp/cookies.txt
+          python - <<'PY'
+          import yt_dlp, time, pathlib, shutil
+          lines = pathlib.Path("/tmp/cookies.txt").read_text().splitlines()
+          real = [l for l in lines if l and not l.startswith("#")]
+          print(f"cookie file rows: {len(real)}")
+          names = [l.split("\t")[5] for l in real if l.count("\t") >= 6]
+          import collections
+          counts = collections.Counter(names)
+          print("has SID:", counts.get("SID", 0), "| has __Secure-1PSID:",
+                counts.get("__Secure-1PSID", 0), "| has SAPISID:",
+                counts.get("SAPISID", 0))
+          url = "https://www.youtube.com/watch?v=4qNRgzHTQsk"
+          combos = [("default-web", None),
+                    ("ios", ["ios"]),
+                    ("tv", ["tv"]),
+                    ("mweb", ["mweb"]),
+                    ("web_safari", ["web_safari"]),
+                    ("android", ["android"])]
+          for label, client in combos:
+              d = pathlib.Path(f"dl_{label}")
+              shutil.rmtree(d, ignore_errors=True)
+              d.mkdir()
+              opts = dict(quiet=True, no_warnings=True, noprogress=True,
+                          socket_timeout=20, retries=0, noplaylist=True,
+                          cookiefile="/tmp/cookies.txt",
+                          format="bestaudio[ext=m4a][abr<=192]/bestaudio[ext=m4a]/bestaudio",
+                          outtmpl=str(d / "source.%(ext)s"))
+              if client:
+                  opts["extractor_args"] = {"youtube": {"player_client": client}}
+              t0 = time.time()
+              try:
+                  with yt_dlp.YoutubeDL(opts) as ydl:
+                      ydl.download([url])
+                  f = next(d.iterdir())
+                  print(f"RESULT {label}: OK size={f.stat().st_size} t={time.time()-t0:.1f}s")
+              except Exception as e:
+                  msg = str(e)
+                  i = msg.find("ERROR: ")
+                  tag = msg[i:i+90].replace("\n", " ") if i >= 0 else msg[:80].replace("\n", " ")
+                  print(f"RESULT {label}: FAIL t={time.time()-t0:.1f}s :: {tag}")
+              finally:
+                  shutil.rmtree(d, ignore_errors=True)
+          PY
