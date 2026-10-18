@@ -17,6 +17,14 @@ SHAZAM_SEGMENT_SECONDS = 12      # audio length sampled from each clip
 CLIP_KEEP_SECONDS = 45           # trim long uploads before recognition
 YOUTUBE_CANDIDATES = 6           # yt-dlp flat search depth (fast)
 
+# YouTube cookies (Netscape format) — REQUIRED on datacenter hosts.
+# YouTube bot-blocks cloud IPs ("Sign in to confirm you're not a bot"); the
+# only cure is cookies from a logged-in YouTube session, which travel here
+# as the host's YOUTUBE_COOKIES secret. On the laptop (residential IP) it
+# can stay empty and yt-dlp works cookieless.
+YOUTUBE_COOKIES = os.getenv("YOUTUBE_COOKIES", "").strip()
+_COOKIES_LIVE_SECONDS = 6 * 3600 * 24 * 30  # rotate the secret roughly monthly
+
 ROOT = Path(__file__).resolve().parent
 
 # Hard deadlines so a stalled network call can never wedge a user's flow.
