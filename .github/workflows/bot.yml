@@ -1,0 +1,52 @@
+name: musicbot
+
+on:
+  schedule:
+    # heartbeat: replaces a crashed run within <=15 min; skipped by the
+    # guard whenever a healthy run is already hosting
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: musicbot-single
+  cancel-in-progress: false
+
+jobs:
+  host:
+    runs-on: ubuntu-latest
+    timeout-minutes: 356
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Dependencies (yt-dlp refreshed on every boot)
+        run: |
+          pip install -q -r requirements.txt
+          pip install -q -U yt-dlp
+
+      - name: Single-instance guard
+        id: guard
+        run: |
+          python supervisor.py guard
+          code=$?
+          if [ $code -eq 0 ]; then
+            echo "host=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "host=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Host the bot until hand-off
+        if: steps.guard.outputs.host == 'true'
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          DISPATCH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
+          LOG_LEVEL: WARNING
+        run: python supervisor.py main
